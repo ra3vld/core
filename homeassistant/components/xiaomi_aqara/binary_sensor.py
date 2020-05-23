@@ -28,7 +28,11 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
         for device in gateway.devices["binary_sensor"]:
             model = device["model"]
             if model in ["motion", "sensor_motion", "sensor_motion.aq2"]:
-                devices.append(XiaomiMotionSensor(device, hass, gateway))
+                # sensor_motion.aq2 can fired motion in realtime, not once per 120 sec
+                in_model = "motion"
+                if model == "sensor_motion.aq2":
+                    in_model = model
+                devices.append(XiaomiMotionSensor(device, hass, gateway, in_model))
             elif model in ["magnet", "sensor_magnet", "sensor_magnet.aq2"]:
                 devices.append(XiaomiDoorSensor(device, gateway))
             elif model == "sensor_wleak.aq1":
@@ -172,7 +176,7 @@ class XiaomiNatgasSensor(XiaomiBinarySensor):
 class XiaomiMotionSensor(XiaomiBinarySensor):
     """Representation of a XiaomiMotionSensor."""
 
-    def __init__(self, device, hass, xiaomi_hub):
+    def __init__(self, device, hass, xiaomi_hub, model):
         """Initialize the XiaomiMotionSensor."""
         self._hass = hass
         self._no_motion_since = 0
@@ -182,7 +186,7 @@ class XiaomiMotionSensor(XiaomiBinarySensor):
         else:
             data_key = "motion_status"
         XiaomiBinarySensor.__init__(
-            self, device, "Motion Sensor", xiaomi_hub, data_key, "motion"
+            self, device, "Motion Sensor", xiaomi_hub, data_key, model
         )
 
     @property
@@ -241,18 +245,20 @@ class XiaomiMotionSensor(XiaomiBinarySensor):
             return False
 
         if value == MOTION:
-            if self._data_key == "motion_status":
+            if self._data_key == "motion_status" or "status":
+                no_motion_delay = 120
+                if self._device_class == "sensor_motion.aq2":
+                    no_motion_delay = 20
                 if self._unsub_set_no_motion:
                     self._unsub_set_no_motion()
                 self._unsub_set_no_motion = async_call_later(
-                    self._hass, 120, self._async_set_no_motion
+                    self._hass, no_motion_delay, self._async_set_no_motion
                 )
 
             if self.entity_id is not None:
                 self._hass.bus.fire(
                     "xiaomi_aqara.motion", {"entity_id": self.entity_id}
                 )
-
             self._no_motion_since = 0
             if self._state:
                 return False
